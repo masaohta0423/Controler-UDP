@@ -12,6 +12,8 @@ namespace ControllerUdp
             var go = new GameObject("Controller UDP Sender");
             Object.DontDestroyOnLoad(go);
             go.AddComponent<ControllerUdpSender>();
+            go.AddComponent<ControllerPoseVisualizer>();
+            go.AddComponent<QuestPassthrough>();
         }
     }
 }

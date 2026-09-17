@@ -11,7 +11,7 @@ namespace ControllerUdp
     /// <summary>Sends Quest controller tracking and input as one UTF-8 JSON UDP datagram.</summary>
     public sealed class ControllerUdpSender : MonoBehaviour
     {
-        [SerializeField] private string destinationAddress = "192.168.1.100";
+        [SerializeField] private string destinationAddress = "255.255.255.255";
         [SerializeField, Min(1)] private int destinationPort = 5005;
         [SerializeField, Range(1f, 120f)] private float sendRateHz = 72f;
         [SerializeField] private bool sendOnlyWhenTracked;
@@ -32,6 +32,7 @@ namespace ControllerUdp
             {
                 endpoint = new IPEndPoint(IPAddress.Parse(destinationAddress), destinationPort);
                 client = new UdpClient(AddressFamily.InterNetwork);
+                client.EnableBroadcast = true;
                 client.Client.SendBufferSize = 64 * 1024;
                 Debug.Log($"Controller UDP: sending to {endpoint} at {sendRateHz:0.#} Hz");
             }

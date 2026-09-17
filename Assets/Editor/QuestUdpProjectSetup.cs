@@ -1,7 +1,9 @@
+using System.Linq;
 using UnityEditor;
 using UnityEditor.Build;
 using UnityEditor.XR.Management;
 using UnityEditor.XR.Management.Metadata;
+using UnityEditor.Build.Reporting;
 using UnityEngine;
 using UnityEngine.XR.Management;
 using UnityEngine.XR.OpenXR;
@@ -53,6 +55,27 @@ namespace ControllerUdp.Editor
             EditorUserBuildSettings.SwitchActiveBuildTarget(BuildTargetGroup.Android, BuildTarget.Android);
             AssetDatabase.SaveAssets();
             Debug.Log("Controller UDP: Quest 3 Android/OpenXR setup complete.");
+        }
+
+        /// <summary>Command-line entry point used for a reproducible Quest APK build.</summary>
+        public static void BuildQuestApk()
+        {
+            Configure();
+            string[] scenes = System.Array.FindAll(EditorBuildSettings.scenes, scene => scene.enabled)
+                .Select(scene => scene.path)
+                .ToArray();
+            if (scenes.Length == 0) throw new BuildFailedException("No enabled scenes in Build Settings.");
+
+            System.IO.Directory.CreateDirectory("Builds/Quest");
+            BuildReport report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
+            {
+                scenes = scenes,
+                locationPathName = "Builds/Quest/ControllerUDP.apk",
+                target = BuildTarget.Android,
+                options = BuildOptions.None
+            });
+            if (report.summary.result != BuildResult.Succeeded)
+                throw new BuildFailedException($"Quest APK build failed: {report.summary.result}");
         }
 
         private static void Enable<T>(OpenXRSettings settings) where T : UnityEngine.XR.OpenXR.Features.OpenXRFeature
