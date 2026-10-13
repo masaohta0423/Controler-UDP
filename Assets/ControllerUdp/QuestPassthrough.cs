@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.Rendering.Universal;
 
 namespace ControllerUdp
 {
@@ -12,6 +13,9 @@ namespace ControllerUdp
             {
                 camera.clearFlags = CameraClearFlags.SolidColor;
                 camera.backgroundColor = Color.clear;
+                camera.nearClipPlane = 0.01f;
+                camera.allowHDR = false;
+                camera.GetUniversalAdditionalCameraData().renderPostProcessing = false;
             }
 
 #if UNITY_ANDROID && !UNITY_EDITOR

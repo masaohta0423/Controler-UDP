@@ -60,6 +60,7 @@ namespace ControllerUdp.Editor
         /// <summary>Command-line entry point used for a reproducible Quest APK build.</summary>
         public static void BuildQuestApk()
         {
+            ControllerCalibrationValidation.Validate();
             Configure();
             string[] scenes = System.Array.FindAll(EditorBuildSettings.scenes, scene => scene.enabled)
                 .Select(scene => scene.path)

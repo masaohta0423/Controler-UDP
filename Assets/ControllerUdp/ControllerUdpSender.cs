@@ -20,10 +20,16 @@ namespace ControllerUdp
         private IPEndPoint endpoint;
         private float nextSendTime;
         private uint sequence;
+        private readonly ControllerCalibration calibration = new ControllerCalibration();
+        private bool leftGripPressed;
+        private bool rightGripPressed;
         private readonly StringBuilder json = new StringBuilder(2048);
 
         public string DestinationAddress { get => destinationAddress; set => destinationAddress = value; }
         public int DestinationPort { get => destinationPort; set => destinationPort = value; }
+        public ControllerCalibration Calibration => calibration;
+        public ControllerPoseState LeftPose { get; } = new ControllerPoseState();
+        public ControllerPoseState RightPose { get; } = new ControllerPoseState();
 
         private void Awake()
         {
@@ -34,7 +40,7 @@ namespace ControllerUdp
                 client = new UdpClient(AddressFamily.InterNetwork);
                 client.EnableBroadcast = true;
                 client.Client.SendBufferSize = 64 * 1024;
-                Debug.Log($"Controller UDP: sending to {endpoint} at {sendRateHz:0.#} Hz");
+                Debug.Log($"Controller UDP: ready for {endpoint} at {sendRateHz:0.#} Hz; waiting for both grips to calibrate");
             }
             catch (Exception e)
             {
@@ -46,13 +52,23 @@ namespace ControllerUdp
         private void Update()
         {
             UpdateHmdCameraPose();
-            if (Time.unscaledTime < nextSendTime) return;
-            nextSendTime = Time.unscaledTime + 1f / sendRateHz;
-
             InputDevice left = InputDevices.GetDeviceAtXRNode(XRNode.LeftHand);
             InputDevice right = InputDevices.GetDeviceAtXRNode(XRNode.RightHand);
             bool leftTracked = IsTracked(left);
             bool rightTracked = IsTracked(right);
+            leftGripPressed = GripPressed(left, leftGripPressed);
+            rightGripPressed = GripPressed(right, rightGripPressed);
+            bool leftValid = ReadPose(left, leftTracked, out Vector3 leftPosition, out Quaternion leftRotation);
+            bool rightValid = ReadPose(right, rightTracked, out Vector3 rightPosition, out Quaternion rightRotation);
+            bool recalibrated = calibration.Update(leftGripPressed && rightGripPressed, left.isValid && rightValid,
+                leftPosition, rightPosition, rightRotation);
+            if (recalibrated)
+                Debug.Log($"Controller UDP: calibrated #{calibration.Revision}, origin={calibration.Origin}, right-controller rotation={calibration.Heading}");
+            SampleHand(LeftPose, left, leftValid, leftPosition, leftRotation, leftGripPressed, recalibrated);
+            SampleHand(RightPose, right, rightValid, rightPosition, rightRotation, rightGripPressed, recalibrated);
+            if (!calibration.IsCalibrated) return;
+            if (Time.unscaledTime < nextSendTime) return;
+            nextSendTime = Time.unscaledTime + 1f / sendRateHz;
             if (sendOnlyWhenTracked && !leftTracked && !rightTracked) return;
 
             BuildJson(left, leftTracked, right, rightTracked);
@@ -77,28 +93,62 @@ namespace ControllerUdp
             return device.isValid && device.TryGetFeatureValue(CommonUsages.isTracked, out bool tracked) && tracked;
         }
 
+        private static bool GripPressed(InputDevice device, bool wasPressed)
+        {
+            return Get(device, CommonUsages.gripButton, false) ||
+                   Get(device, CommonUsages.grip, 0f) >= (wasPressed ? 0.6f : 0.8f);
+        }
+
+        private static bool ReadPose(InputDevice device, bool tracked, out Vector3 position, out Quaternion rotation)
+        {
+            bool hasPosition = device.TryGetFeatureValue(CommonUsages.devicePosition, out position);
+            bool hasRotation = device.TryGetFeatureValue(CommonUsages.deviceRotation, out rotation);
+            rotation = ControllerCalibration.LocalPoseRotation(rotation);
+            return tracked && hasPosition && hasRotation;
+        }
+
+        private static void SampleHand(ControllerPoseState pose, InputDevice device, bool valid,
+            Vector3 position, Quaternion rotation, bool gripPressed, bool reset)
+        {
+            pose.StickPressed = Get(device, CommonUsages.primary2DAxisClick, false);
+            pose.TriggerPressed = Get(device, CommonUsages.triggerButton, false) ||
+                                  Get(device, CommonUsages.trigger, 0f) >= 0.1f;
+            pose.GripPressed = gripPressed;
+            pose.Sample(valid, position, rotation, Get(device, CommonUsages.deviceVelocity, Vector3.zero),
+                Get(device, CommonUsages.deviceAngularVelocity, Vector3.zero), reset);
+        }
+
         private void BuildJson(InputDevice left, bool leftTracked, InputDevice right, bool rightTracked)
         {
             json.Clear();
-            json.Append("{\"version\":1,\"sequence\":").Append(sequence++);
+            json.Append("{\"version\":2,\"sequence\":").Append(sequence++);
             json.Append(",\"timestampMs\":").Append(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-            json.Append(",\"left\":"); AppendController(left, leftTracked);
-            json.Append(",\"right\":"); AppendController(right, rightTracked);
+            json.Append(",\"coordinateSystem\":\"right-handed-x-forward-y-left-z-up\"");
+            json.Append(",\"calibrated\":").Append(calibration.IsCalibrated ? "true" : "false");
+            json.Append(",\"calibrationRevision\":").Append(calibration.Revision);
+            json.Append(",\"left\":"); AppendController(left, leftTracked, LeftPose);
+            json.Append(",\"right\":"); AppendController(right, rightTracked, RightPose);
             json.Append('}');
         }
 
-        private void AppendController(InputDevice d, bool tracked)
+        private void AppendController(InputDevice d, bool tracked, ControllerPoseState pose)
         {
-            Vector3 position = Get(d, CommonUsages.devicePosition, Vector3.zero);
-            Quaternion rotation = Get(d, CommonUsages.deviceRotation, Quaternion.identity);
-            Vector3 velocity = Get(d, CommonUsages.deviceVelocity, Vector3.zero);
-            Vector3 angularVelocity = Get(d, CommonUsages.deviceAngularVelocity, Vector3.zero);
+            Vector3 position = pose.Position;
+            Quaternion rotation = pose.Rotation;
+            Vector3 velocity = pose.Velocity;
+            Vector3 angularVelocity = pose.AngularVelocity;
+            position = calibration.Position(position);
+            rotation = calibration.Rotation(rotation);
+            velocity = calibration.Velocity(velocity);
+            angularVelocity = calibration.AngularVelocity(angularVelocity);
             Vector2 stick = Get(d, CommonUsages.primary2DAxis, Vector2.zero);
 
             json.Append("{\"connected\":").Append(d.isValid ? "true" : "false");
             json.Append(",\"tracked\":").Append(tracked ? "true" : "false");
-            json.Append(",\"position\":"); Append(position);
-            json.Append(",\"rotation\":"); Append(rotation);
+            json.Append(",\"poseUpdating\":").Append(pose.Updating ? "true" : "false");
+            json.Append(",\"poseValid\":").Append(pose.HasPose ? "true" : "false");
+            json.Append(",\"position\":"); if (pose.HasPose) Append(position); else json.Append("null");
+            json.Append(",\"rotation\":"); if (pose.HasPose) Append(rotation); else json.Append("null");
             json.Append(",\"velocity\":"); Append(velocity);
             json.Append(",\"angularVelocity\":"); Append(angularVelocity);
             json.Append(",\"trigger\":"); Number(Get(d, CommonUsages.trigger, 0f));

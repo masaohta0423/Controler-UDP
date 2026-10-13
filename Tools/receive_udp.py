@@ -13,11 +13,13 @@ def pressed(buttons):
 
 
 def controller(label, data):
-    pos = data.get("position", [0, 0, 0])
+    pos = data.get("position")
+    position_text = "unset" if pos is None else f"({pos[0]:+.3f},{pos[1]:+.3f},{pos[2]:+.3f})"
     stick = data.get("stick", [0, 0])
     return (
         f"{label} tracked={str(data.get('tracked', False)):<5} "
-        f"pos=({pos[0]:+.3f},{pos[1]:+.3f},{pos[2]:+.3f}) "
+        f"updating={str(data.get('poseUpdating', False)):<5} "
+        f"pos={position_text} "
         f"trigger={data.get('trigger', 0):.2f} grip={data.get('grip', 0):.2f} "
         f"stick=({stick[0]:+.2f},{stick[1]:+.2f}) "
         f"buttons=[{pressed(data.get('buttons', {}))}]"
@@ -57,7 +59,8 @@ def main():
                 print(json.dumps(packet, ensure_ascii=False, separators=(",", ":")), flush=True)
             else:
                 print(
-                    f"#{packet.get('sequence', '?')} {address[0]} {count / elapsed:.1f} pkt/s | "
+                    f"#{packet.get('sequence', '?')} {address[0]} {count / elapsed:.1f} pkt/s "
+                    f"calib={packet.get('calibrated', False)} rev={packet.get('calibrationRevision', 0)} | "
                     f"{controller('L', packet.get('left', {}))} | "
                     f"{controller('R', packet.get('right', {}))}",
                     flush=True,
